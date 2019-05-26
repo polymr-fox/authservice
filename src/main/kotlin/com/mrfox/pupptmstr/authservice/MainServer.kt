@@ -9,6 +9,7 @@ import io.ktor.application.install
 import io.ktor.features.ContentNegotiation
 import io.ktor.gson.gson
 import io.ktor.http.HttpStatusCode
+import io.ktor.request.authorization
 import io.ktor.request.receive
 import io.ktor.response.respond
 import io.ktor.routing.post
@@ -43,10 +44,9 @@ fun main() {
                             call.respond(HttpStatusCode.OK, makeCorrectUserModel(user.username))
                         } catch (e: SQLException) {
                             call.respond(HttpStatusCode.InternalServerError)
-                            println(e.message)
                         }
                     } else {
-                        call.respond(HttpStatusCode.Unauthorized, makeUnauthorizedResponseMessage())
+                        call.respond(HttpStatusCode.Unauthorized, makeUnauthorizedLoginResponseMessage())
                     }
                 } else {
                     call.respond(HttpStatusCode.BadRequest, makeBadResponseMessage())
@@ -56,10 +56,33 @@ fun main() {
 
             post("/reg") {
                 val user = call.receive<RegistrationModel>()
+                if (
+                    checkFormat(user.fullName) &&
+                    checkFormat(user.mail) &&
+                    checkFormat(user.password) &&
+                    checkFormat(user.username) &&
+                    checkFormat(user.role)) {
+                    if (reg(user.username, user.password, user.fullName, user.mail, user.role)) {
+                        call.respond(HttpStatusCode.OK, makeCorrectUserModel(user.username))
+                    } else {
+                        call.respond(HttpStatusCode.Conflict, makeUsernameOrMailAlreadyExistMessage())
+                    }
+                } else {
+                    call.respond(HttpStatusCode.BadRequest, makeBadResponseMessage())
+                }
             }
 
             post("/update_jwt") {
-                val user = call.receive<AdditionalModel>()
+                val token = call.request.authorization()
+                if (token != null) {
+                    if (validateJws(token)) {
+                        call.respond(HttpStatusCode.OK, makeNewJwt(token))
+                    } else {
+                        call.respond(HttpStatusCode.Unauthorized, makeUnauthorizedJWTResponseMessage())
+                    }
+                } else {
+                    call.respond(HttpStatusCode.Unauthorized, makeNoTokenInHeaderMessage())
+                }
             }
 
             post("update_pass") {
@@ -75,7 +98,7 @@ fun main() {
 }
 
 fun checkFormat(text: String): Boolean {
-    return Regex("[A-Za-z0-9_\\-]+").matches(text)
+    return Regex("[A-Za-z0-9_ \\-]+").matches(text)
 }
 
 fun makeBadResponseMessage() = ErrorModel(status = 400,
@@ -83,7 +106,22 @@ fun makeBadResponseMessage() = ErrorModel(status = 400,
     message = "Illegal characters in login/password",
     path = "/auth")
 
-fun makeUnauthorizedResponseMessage() = ErrorModel(status = 401,
+fun makeUnauthorizedLoginResponseMessage() = ErrorModel(status = 401,
     error = "Unauthorized",
     message = "Wrong login or password",
     path = "/auth")
+
+fun makeUnauthorizedJWTResponseMessage() = ErrorModel(status = 401,
+    error = "Unauthorized",
+    message = "Wrong Jwt, auth again by /auth",
+    path = "/update_jwt")
+
+fun makeNoTokenInHeaderMessage() = ErrorModel(status = 401,
+    error = "Unauthorized",
+    message = "No token in header provided",
+    path = "/update_jwt")
+
+fun makeUsernameOrMailAlreadyExistMessage() = ErrorModel(status = 409,
+    error = "Conflict",
+    message = "User with such username or mail already exist. Choose another one.",
+    path = "/reg")
